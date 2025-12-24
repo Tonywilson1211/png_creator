@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Logo Background Remover</title>
+    <style>
+        :root { --primary: #007bff; --bg: #f4f4f4; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: var(--bg); color: #333; }
+        .app-container { max-width: 900px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        
+        h2 { margin-top: 0; text-align: center; }
+        .toolbar { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+        
+        /* Control Groups */
+        .control-group { display: flex; flex-direction: column; align-items: center; min-width: 150px; }
+        .control-group label { font-size: 0.85em; font-weight: bold; margin-bottom: 5px; color: #555; }
+        
+        /* Inputs */
+        input[type="range"] { width: 100%; cursor: pointer; }
+        button { padding: 8px 16px; cursor: pointer; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: 500; transition: background 0.2s; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        button.secondary { background: #6c757d; }
+        
+        /* Color Preview Buttons */
+        .bg-toggles { display: flex; gap: 5px; margin-top: 5px; }
+        .bg-btn { width: 24px; height: 24px; border-radius: 50%; border: 1px solid #ddd; cursor: pointer; padding: 0; }
+        
+        /* Canvas Container */
+        .canvas-wrapper { 
+            position: relative; 
+            min-height: 300px; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center;
+            border: 2px dashed #ddd; 
+            border-radius: 8px;
+            overflow: hidden;
+            background-color: #eee; /* Default checkerboard fallback handled via CSS class */
+        }
+
+        /* Background States */
+        .canvas-wrapper.bg-checker {
+            background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+        .canvas-wrapper.bg-white { background: #ffffff; }
+        .canvas-wrapper.bg-black { background: #000000; }
+        .canvas-wrapper.bg-red { background: #ff4444; }
+
+        canvas { max-width: 100%; max-height: 80vh; cursor: crosshair; }
+        
+        .status { text-align: center; font-size: 0.9em; margin-top: 10px; color: #666; height: 1.2em; }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <h2>Make It Transparent</h2>
+    
+    <div class="toolbar">
+        <div class="control-group">
+            <label>1. Upload Image</label>
+            <input type="file" id="upload" accept="image/*">
+        </div>
+
+        <div class="control-group">
+            <label>2. Tuning</label>
+            <div style="width: 100%">
+                <div style="display:flex; justify-content:space-between; font-size:0.8em">
+                    <span>Tolerance</span> <span id="tolVal">50</span>
+                </div>
+                <input type="range" id="tolerance" min="0" max="200" value="50">
+            </div>
+            <div style="width: 100%; margin-top: 8px;">
+                <div style="display:flex; justify-content:space-between; font-size:0.8em">
+                    <span>Softness</span> <span id="softVal">0</span>
+                </div>
+                <input type="range" id="softness" min="0" max="100" value="0">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>3. Preview On</label>
+            <div class="bg-toggles">
+                <button class="bg-btn" style="background: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPjxyZWN0IHdpZHRoPSI0IiBoZWlnaHQ9IjQiIGZpbGw9IiNjY2MiLz48cmVjdCB4PSI0IiB5PSI0IiB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjY2NjIi8+PC9zdmc+')" onclick="setBg('bg-checker')" title="Transparent"></button>
+                <button class="bg-btn" style="background: white" onclick="setBg('bg-white')" title="White"></button>
+                <button class="bg-btn" style="background: black" onclick="setBg('bg-black')" title="Black"></button>
+                <button class="bg-btn" style="background: #ff4444" onclick="setBg('bg-red')" title="Red (High Contrast)"></button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>4. Finish</label>
+            <button id="downloadBtn" disabled>Download PNG</button>
+        </div>
+    </div>
+
+    <div class="status" id="statusText">Upload an image, then <b>click on the color</b> you want to remove.</div>
+
+    <div class="canvas-wrapper bg-checker" id="canvasWrapper">
+        <canvas id="canvas"></canvas>
+    </div>
+</div>
+
+<script>
+    const upload = document.getElementById('upload');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const wrapper = document.getElementById('canvasWrapper');
+    const statusText = document.getElementById('statusText');
+    const downloadBtn = document.getElementById('downloadBtn');
+    
+    // Inputs
+    const tolInput = document.getElementById('tolerance');
+    const softInput = document.getElementById('softness');
+    const tolDisplay = document.getElementById('tolVal');
+    const softDisplay = document.getElementById('softVal');
+
+    // State
+    let originalImageData = null;
+    let targetColor = { r: 255, g: 255, b: 255 }; // Default white
+    let isImageLoaded = false;
+
+    // --- 1. Load Image ---
+    upload.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const img = new Image();
+        img.onload = () => {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            
+            // Save original data
+            originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            
+            // Auto-detect top-left pixel as default background
+            const data = originalImageData.data;
+            targetColor = { r: data[0], g: data[1], b: data[2] };
+            
+            isImageLoaded = true;
+            processImage();
+            downloadBtn.disabled = false;
+            statusText.innerHTML = "Click on the image to pick a different background color.";
+        };
+        img.src = URL.createObjectURL(file);
+    });
+
+    // --- 2. Processing Logic ---
+    function processImage() {
+        if (!originalImageData) return;
+
+        const imgData = new ImageData(
+            new Uint8ClampedArray(originalImageData.data),
+            originalImageData.width,
+            originalImageData.height
+        );
+        const data = imgData.data;
+        
+        const tolerance = parseInt(tolInput.value);
+        const softness = parseInt(softInput.value);
+        const tolSq = tolerance * tolerance; // Compare squared distances for speed
+
+        const rT = targetColor.r;
+        const gT = targetColor.g;
+        const bT = targetColor.b;
+
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+
+            // Euclidean distance
+            const dist = Math.sqrt((r - rT)**2 + (g - gT)**2 + (b - bT)**2);
+
+            if (dist <= tolerance) {
+                // Exact match within tolerance -> Fully transparent
+                data[i + 3] = 0;
+            } else if (dist <= tolerance + softness) {
+                // Edge case -> Partial transparency (fade out)
+                // If softness is 0, this block is skipped.
+                // We map the distance from (tolerance) to (tolerance + softness) to 0-255 opacity
+                const alpha = ((dist - tolerance) / softness) * 255;
+                data[i + 3] = alpha;
+            }
+        }
+
+        ctx.putImageData(imgData, 0, 0);
+    }
+
+    // --- 3. Event Listeners ---
+    
+    // Sliders
+    tolInput.addEventListener('input', (e) => {
+        tolDisplay.textContent = e.target.value;
+        if (isImageLoaded) requestAnimationFrame(processImage);
+    });
+    softInput.addEventListener('input', (e) => {
+        softDisplay.textContent = e.target.value;
+        if (isImageLoaded) requestAnimationFrame(processImage);
+    });
+
+    // Click to Pick Color
+    canvas.addEventListener('click', (e) => {
+        if (!isImageLoaded) return;
+
+        // Get click coordinates relative to canvas
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+
+        // Pick color from ORIGINAL data (not currently processed data)
+        const i = (Math.floor(y) * canvas.width + Math.floor(x)) * 4;
+        const data = originalImageData.data;
+        
+        targetColor = { r: data[i], g: data[i+1], b: data[i+2] };
+        
+        statusText.innerHTML = `Selected Color: RGB(${targetColor.r}, ${targetColor.g}, ${targetColor.b})`;
+        processImage();
+    });
+
+    // Background Preview
+    window.setBg = (className) => {
+        wrapper.className = 'canvas-wrapper ' + className;
+    };
+
+    // Download
+    downloadBtn.addEventListener('click', () => {
+        const link = document.createElement('a');
+        link.download = 'transparent-logo.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+    });
+</script>
+
+</body>
+</html>
