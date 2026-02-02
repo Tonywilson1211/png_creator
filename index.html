@@ -93,7 +93,12 @@
         </div>
 
         <div class="control-group">
-            <label>4. Finish</label>
+            <label>4. Extract White Text</label>
+            <button id="extractTextBtn" disabled>Extract White Text</button>
+        </div>
+
+        <div class="control-group">
+            <label>5. Finish</label>
             <button id="downloadBtn" disabled>Download PNG</button>
         </div>
     </div>
@@ -112,6 +117,7 @@
     const wrapper = document.getElementById('canvasWrapper');
     const statusText = document.getElementById('statusText');
     const downloadBtn = document.getElementById('downloadBtn');
+    const extractTextBtn = document.getElementById('extractTextBtn');
     
     // Inputs
     const tolInput = document.getElementById('tolerance');
@@ -123,6 +129,7 @@
     let originalImageData = null;
     let targetColor = { r: 255, g: 255, b: 255 }; // Default white
     let isImageLoaded = false;
+    let isTextExtractionMode = false;
 
     // --- 1. Load Image ---
     upload.addEventListener('change', (e) => {
@@ -145,7 +152,8 @@
             isImageLoaded = true;
             processImage();
             downloadBtn.disabled = false;
-            statusText.innerHTML = "Click on the image to pick a different background color.";
+            extractTextBtn.disabled = false;
+            statusText.innerHTML = "Click on the image to pick a different background color, or use 'Extract White Text' mode.";
         };
         img.src = URL.createObjectURL(file);
     });
@@ -163,29 +171,74 @@
         
         const tolerance = parseInt(tolInput.value);
         const softness = parseInt(softInput.value);
-        const tolSq = tolerance * tolerance; // Compare squared distances for speed
 
-        const rT = targetColor.r;
-        const gT = targetColor.g;
-        const bT = targetColor.b;
+        if (isTextExtractionMode) {
+            // Extract white text mode: keep white/near-white pixels, remove everything else
+            const whiteThreshold = 200; // Consider pixels with R, G, B all above this as "white"
+            const whiteTolerance = parseInt(tolInput.value); // Use tolerance slider for white detection sensitivity
+            
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                
+                // Calculate how "white" the pixel is
+                // Average of RGB values (higher = whiter)
+                const avg = (r + g + b) / 3;
+                // Also check individual channels to ensure it's not too far from pure white
+                const minChannel = Math.min(r, g, b);
+                const maxChannel = Math.max(r, g, b);
+                
+                // Pixel is considered "white text" if:
+                // - Average is above threshold
+                // - Minimum channel is reasonably high (not too dark)
+                // - Channels are relatively close (not too colorful)
+                const isWhite = avg >= (whiteThreshold - whiteTolerance) && 
+                               minChannel >= (whiteThreshold - whiteTolerance - 50) &&
+                               (maxChannel - minChannel) < (50 + whiteTolerance);
+                
+                if (isWhite) {
+                    // Keep the pixel (make it fully opaque white)
+                    data[i] = 255;     // R
+                    data[i + 1] = 255; // G
+                    data[i + 2] = 255; // B
+                    data[i + 3] = 255; // A (fully opaque)
+                } else {
+                    // Remove background (make transparent)
+                    if (softness > 0 && avg > (whiteThreshold - whiteTolerance - softness)) {
+                        // Edge case with softness - partial transparency
+                        const fadeStart = whiteThreshold - whiteTolerance - softness;
+                        const alpha = ((avg - fadeStart) / softness) * 255;
+                        data[i + 3] = Math.max(0, Math.min(255, alpha));
+                    } else {
+                        data[i + 3] = 0; // Fully transparent
+                    }
+                }
+            }
+        } else {
+            // Original mode: remove selected color
+            const rT = targetColor.r;
+            const gT = targetColor.g;
+            const bT = targetColor.b;
 
-        for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
 
-            // Euclidean distance
-            const dist = Math.sqrt((r - rT)**2 + (g - gT)**2 + (b - bT)**2);
+                // Euclidean distance
+                const dist = Math.sqrt((r - rT)**2 + (g - gT)**2 + (b - bT)**2);
 
-            if (dist <= tolerance) {
-                // Exact match within tolerance -> Fully transparent
-                data[i + 3] = 0;
-            } else if (dist <= tolerance + softness) {
-                // Edge case -> Partial transparency (fade out)
-                // If softness is 0, this block is skipped.
-                // We map the distance from (tolerance) to (tolerance + softness) to 0-255 opacity
-                const alpha = ((dist - tolerance) / softness) * 255;
-                data[i + 3] = alpha;
+                if (dist <= tolerance) {
+                    // Exact match within tolerance -> Fully transparent
+                    data[i + 3] = 0;
+                } else if (dist <= tolerance + softness) {
+                    // Edge case -> Partial transparency (fade out)
+                    // If softness is 0, this block is skipped.
+                    // We map the distance from (tolerance) to (tolerance + softness) to 0-255 opacity
+                    const alpha = ((dist - tolerance) / softness) * 255;
+                    data[i + 3] = alpha;
+                }
             }
         }
 
@@ -231,10 +284,29 @@
         wrapper.className = 'canvas-wrapper ' + className;
     };
 
+    // Extract White Text Mode
+    extractTextBtn.addEventListener('click', () => {
+        isTextExtractionMode = !isTextExtractionMode;
+        
+        if (isTextExtractionMode) {
+            extractTextBtn.textContent = 'Exit Text Mode';
+            extractTextBtn.style.background = '#28a745';
+            statusText.innerHTML = "White text extraction mode active. Adjust tolerance to fine-tune white detection.";
+        } else {
+            extractTextBtn.textContent = 'Extract White Text';
+            extractTextBtn.style.background = '';
+            statusText.innerHTML = "Click on the image to pick a different background color.";
+        }
+        
+        if (isImageLoaded) {
+            processImage();
+        }
+    });
+
     // Download
     downloadBtn.addEventListener('click', () => {
         const link = document.createElement('a');
-        link.download = 'transparent-logo.png';
+        link.download = isTextExtractionMode ? 'extracted-text.png' : 'transparent-logo.png';
         link.href = canvas.toDataURL('image/png');
         link.click();
     });
